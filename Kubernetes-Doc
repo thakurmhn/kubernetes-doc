@@ -1,0 +1,35 @@
+ETCD: 
+is distributed reliable key value store which is simple, secure and fast.
+
+
+
+Kube-API-Server:
+
+is the primary management component in kubernetes
+when you hit "kubectl get nodes" command it authenticate the request and validates it.
+Then its retrive data from ETCD and respons back to the request
+Functions of KubApi server
+
+- Authenticate : Authenticate the request
+- Validate - Validate the request
+- Retrive Data - Retrive data from ETCD
+- Update data - Update data from ETCD
+- Scheduler - calls Scheduler to schedule pods on nodes
+- Kubelet - calls kubelet and verify response from kebelet wheter pod has been scheduled
+
+Kube Controller Manager: 
+	Continuously watch status of the resouces and take remidite action.
+
+	- Node Controller - monitor states of node in every 5 sec.
+		it waits for 40 sec before marking it unreachable
+		if node is unreachable it gives 5 min to come back up
+		if node doesnt come back, it removes the pods on the node and assigns them to healthy nodes
+	- Replication Controller
+		Ensures desire pods are always available in replicaset
+	
+There are may controllers in kubernetes for each object type and those are bundled in to Kube controller Manager
+
+Scheduller:
+
+
+

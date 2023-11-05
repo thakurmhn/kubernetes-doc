@@ -1,0 +1,83 @@
+
+
+
+Generate POD manifest: 
+	- kubectl run nginx --image=nginx --dry-run=client -o yaml
+	- kubectl expose pod redis --port=6379 --name redis-service --dry-run=client -o yaml
+	- kubectl explain pod  --recursive
+	- 
+
+
+Deployments: 
+	- kubectl get all
+	- Generate Deployments manifest:
+	 Commands:
+		- kubectl create deployment --image=nginx nginx --dry-run=client -o yaml
+		- kubectl create deployment --image=nginx nginx --replicas=4 --dry-run=client -o yaml > nginx-deployment.yaml 
+		- kubectl scale deployment nginx --replicas=5
+		- 
+		- kubectl set image deployment nginx nginx=nginx:1.21
+		- kubectl replace -f webapp.yaml
+		
+NameSpaces: 
+	- NameSpaces has their own set of policies defines who can do what. 
+	- You can define resource Quata to the namespace. eg. amount of RAM, CPU etcl
+	- Within the same namespace resource will be identified by its name. eg. webapp will be idetLentified as webapp (hostname)
+	- To access resource within cross namespace you will have to use fqdn. eg. webapp.<namespace>.svc.cluster.local
+    Commands:
+		-  kubectl create namespace deployment
+		 # Swich permanently to new namespace
+		- kubectl config set-context $(kubectl config current-context) --namespace=development  
+		- kubectl get pods --all-namespaces
+Service:
+	- kubectl expose pod nginx --type=NodePort --port=80 --name=nginx-service --dry-run=client -o yaml
+	- kubectl expose deployment red-webapp --name=red-webapp-service --type=NodePort --port=8080 --target-port=8080 --dry-run=client -o yaml > red-webapp-service.yaml
+
+Labels & Selectors:
+	- kubectl get pod --selector env=development
+	- kubectl get pod -l env=dev,bu=finance,tier=frontend
+	
+Taints & Tollerance:
+	-  Used to restrict a node to run perticular pod; Taint and tollerations tells nodes to accepts certain pods set with tollerations
+	- Taints are set on nodes and Tollerance is set on Pods
+	- What happens to the pods which do not tollerate this taint
+	   - NoSchedule
+	   - PreferNoSchedule
+	   - NoExecute
+	- kubectl taint nodes node01 key=value:taint-effect
+	- kubectl taint nodes node01 app=blue:NoSchedule
+	
+	- kubectl taint node node01 spray=mortein:NoSchedule
+	- kubectl run  mosquito --image=nginx
+	- root@controlplane:~# kubectl get po
+			NAME       READY   STATUS    RESTARTS   AGE
+			mosquito   0/1     Pending   0          10s
+			
+	     - pod is in pending state because it can not tollerate taint Mortein
+		 
+	
+	- example pod defination 
+		apiVersion: app/v1
+		kind: Pods
+		metadata:
+		  name: my-app-pod
+		  lables: 
+		    tier: frontend
+			
+		 spec:
+		   containers:
+		     name: nginx
+			 image: nginx
+		  tollerations:
+		  - key: "app"
+		    operators: "Equal"
+			value: "blue"
+			effect: "NoSchedule"
+	
+	-  By default scheduller does not schedule any pod on Master node because Taint is set on Master node
+	-  kubectl descibe node kubemaster | grep Taint
+	
+	
+	
+	
+	
