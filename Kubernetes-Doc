@@ -1,21 +1,34 @@
+Core Concepts:
+
+Kubernetes cluster consist of set of nodes, Master nodes and Worker Nodes
+Master node is called controlpane Node. Master node controllers the worker nodes. 
+Master node is responsible for manageing kubernetes cluster, storing information about different objects in the cluster, 
+planning which container to go where, monitoring nodes and containers on nodes.
+Master node does this job using set of components called controllpane components.
+
+
+
 ETCD: 
 is distributed reliable key value store which is simple, secure and fast.
 
-
-
 Kube-API-Server:
 
-is the primary management component in kubernetes
-when you hit "kubectl get nodes" command it authenticate the request and validates it.
-Then its retrive data from ETCD and respons back to the request
-Functions of KubApi server
+	is the primary management component in kubernetes
+	when you hit "kubectl get nodes" command it authenticate the request and validates the request.
+	Then its retrive data from ETCD and respons back to the request
+	Kube-API-Server responsible to orchastrating all operations withing the cluster. 
+	it expose the APIs which used by external users for management and operations.
+	E.g kubectl command
 
-- Authenticate : Authenticate the request
-- Validate - Validate the request
-- Retrive Data - Retrive data from ETCD
-- Update data - Update data from ETCD
-- Scheduler - calls Scheduler to schedule pods on nodes
-- Kubelet - calls kubelet and verify response from kebelet wheter pod has been scheduled
+
+	- Functions of KubApi server
+
+		- Authenticate : Authenticate the request
+		- Validate - Validate the request
+		- Retrive Data - Retrive data from ETCD
+		- Update data - Update data from ETCD
+		- Scheduler - calls Scheduler to schedule pods on nodes
+		- Kubelet - calls kubelet and verify response from kebelet wheter pod has been scheduled
 
 Kube Controller Manager: 
 	Continuously watch status of the resouces and take remidite action.
@@ -27,9 +40,13 @@ Kube Controller Manager:
 	- Replication Controller
 		Ensures desire pods are always available in replicaset
 	
-There are may controllers in kubernetes for each object type and those are bundled in to Kube controller Manager
+	There are many controllers in kubernetes for each object type and those are bundled in to Kube controller Manager
 
 Scheduller:
+	- Finds the right node to place a contianer
+
+
+
 
 
 

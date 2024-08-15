@@ -1,0 +1,1572 @@
+Expose service 
+
+kubectl expose deployment simple-webapp-deployment --type=NodePort --port=8080 --target-port=8080 --dry-run=client -o yaml > webapp-service.yaml
+
+kubectl expose po redis --name redis-service --type ClusterIP --port=6379 --target-port=6379 --dry-run=client -o yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  name: webapp-service
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+    nodePort: 30080   <==  update the nodeport
+  selector:
+    name: simple-webapp
+  type: NodePort
+status:
+  loadBalancer: {}
+
+
+===========================================
+
+- Scheduling: 
+
+Manually schedule the POD - 
+
+What if there is no Scheduller?
+
+By defulat in container spec section we do not provide "NodeName" property, hence scheduler scan all the nodes and choose right node to schedule the pod
+If there is no scheduler then the POD continue to run in Pending state - in this case we have to manually schedule the POD on perticular node using NodeName property. 
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  nodeName: node01
+  containers: 
+  -  image: nginx
+     name: nginx
+
+If Pod is already runninng and you want to schedule the POD on different node, Kubernetes does not allow you to change the NodeName property of the POD.
+In this case you will have to create Binding Object (manifest) and send POST request using curl to Kubernetes Binding API. 
+
+
+- Labels and Selectors: 
+
+	Labels and Selectors are used to Group resources together and filter them based on your needs
+	Add the lable app=App1 to POD in pod defination and get the pod using selector
+	
+	- kubectl get po --selector app=App1
+	- kubectl get po --selector app=app1,bu=finance,env=prod
+	
+	Kubernetes internally use labels to group the resouces. e.g in Pod defination we label the pods and then in ReplicaSet we use the same labels to select the PODs (matchLables)
+	
+	
+Taints & Tollerance:
+	-  Used to restrict a node to run perticular pod; Taint and tollerations tells nodes to accepts certain pods set matching with tollerations
+	- Taints are set on nodes and Tollerance is set on Pods
+	- What happens to the pods which do not tollerate this taint - Pods does not gets scheduled on the node 
+	  
+	Taint Effect: 
+
+	   - NoSchedule		- Pod will not be scheduled on the node
+	   - PreferNoSchedule  - scheduler will prefer not to schedule pod on node but that is not guarenteed 
+	   - NoExecute - New pods will not be scheduled on the node and existing pods will be evicted if they do not tollerate the taint
+	   
+	   
+	   Note that Taints on node does not tell the pod to get scheduled on perticular node; 
+	   but it tells nodes to accepts perticular pods set with tollerations
+	   
+	- kubectl taint nodes node01 key=value:taint-effect
+	- kubectl taint nodes node01 app=blue:NoSchedule
+	
+		The taint has key key1, value value1, and taint effect NoSchedule. This means that no pod will be able to schedule onto node1 unless it has a matching toleration
+	
+	- kubectl taint node node01 spray=mortein:NoSchedule
+	- kubectl run  mosquito --image=nginx
+	- root@controlplane:~# kubectl get po
+			NAME       READY   STATUS    RESTARTS   AGE
+			mosquito   0/1     Pending   0          10s
+			
+	     - pod is in pending state because it can not tollerate taint Mortein
+		 
+		 - pod must have matching tolleration (key=value) to get scheduled on the tainted node 
+		    in this case spray=mortine
+		 
+	
+	- example pod defination 
+		apiVersion: app/v1
+		kind: Pods
+		metadata:
+		  name: my-app-pod 
+		  lables: 
+		    tier: frontend
+			
+		spec:
+		  containers:
+		     name: nginx
+			 image: nginx
+		  tollerations:
+		  - key: "app"
+		    operators: "Equal"
+			value: "blue"
+			effect: "NoSchedule"
+	
+	-  By default scheduller does not schedule any pod on Master node because Taint is set on Master node
+	-  kubectl descibe node kubemaster | grep Taint
+	
+	Untaint Node: 
+	- kubectl taint node controlplane node-role.kubernetes.io/control-plane:NoSchedule-
+	
+	Why Pods goes in Pending state?
+	
+	- There is no scheduler or Pod does not have matching tolerations for tainted Node. 
+	
+Node Selectors:
+
+	kubectl get nodes --show-labels
+	kubectl label nodes node01 disktype=ssd
+	kubectl get nodes --show-labels
+	
+	Pod defination
+	
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  labels:
+    env: test
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    imagePullPolicy: IfNotPresent
+  nodeSelector:
+    disktype: ssd
+
+	You will have to first Label the node prior to creating pod. Then in pod defination use property nodeSelector = node-label
+	
+	- kubectl label nodes node01 size=Large 
+	
+	Node slector has limitations. e.g if you want to place pod on Large "OR" Medium node or "NOT" on small nodes then this can not be achieved using nodeSelector.
+	This is where Node Afinity and Antiaffinity comes in to picture
+
+--------------------------------------------	
+Node Afinity: Affinity based on Node lables 
+
+Node affinity is conceptually similar to nodeSelector, 
+allowing you to constrain which nodes your Pod can be scheduled on based on node labels. 
+There are two types of node affinity:
+
+requiredDuringSchedulingIgnoredDuringExecution: The scheduler can't schedule the Pod unless the rule is met. 
+This functions like nodeSelector, but with a more expressive syntax.
+preferredDuringSchedulingIgnoredDuringExecution: 
+The scheduler tries to find a node that meets the rule. If a matching node is not available, the scheduler still schedules the Pod.
+
+Note: In the preceding types, IgnoredDuringExecution means that if the node labels change after Kubernetes schedules the Pod, the Pod continues to run.
+
+To configure Node Affinity, it is important to Label a Node. 
+	
+	
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-node-affinity
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:   
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.kubernetes.io/zone
+            operator: In
+            values:
+            - antarctica-east1
+            - antarctica-west1
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        preference:
+          matchExpressions:
+          - key: another-node-label-key
+            operator: In
+            values:
+            - another-node-label-value
+  containers:
+  - name: with-node-affinity
+    image: registry.k8s.io/pause:2.0
+	
+-------------
+
+affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/os
+            operator: In
+            values:
+            - linux
+
+Node affinity is conceptually similar to nodeSelector,
+allowing you to constrain which nodes your Pod can be scheduled on based on node labels. There are two types of node affinity:
+
+requiredDuringSchedulingIgnoredDuringExecution: The scheduler can't schedule the Pod unless the rule is met. 
+This functions like nodeSelector, but with a more expressive syntax.
+
+preferredDuringSchedulingIgnoredDuringExecution: The scheduler tries to find a node that meets the rule.
+If a matching node is not available, the scheduler still schedules the Pod.
+Note: In the preceding types, IgnoredDuringExecution means that if the node labels change after Kubernetes schedules the Pod, the Pod continues to run.
+
+Node affinity weight:
+
+You can specify a weight between 1 and 100 for each instance of the preferredDuringSchedulingIgnoredDuringExecution affinity type. 
+When the scheduler finds nodes that meet all the other scheduling requirements of the Pod, 
+the scheduler iterates through every preferred rule that the node satisfies and adds the value of the weight for that expression to a sum.
+The final sum is added to the score of other priority functions for the node. 
+Nodes with the highest total score are prioritized when the scheduler makes a scheduling decision for the Pod.
+
+--------------------------------------------
+
+Node affinity per scheduling profile:
+If you have multiple schedulers - 
+
+FEATURE STATE: Kubernetes v1.20 [beta]
+When configuring multiple scheduling profiles, you can associate a profile with a node affinity, 
+which is useful if a profile only applies to a specific set of nodes. 
+To do so, add an addedAffinity to the args field of the NodeAffinity plugin in the scheduler configuration. For example:
+
+apiVersion: kubescheduler.config.k8s.io/v1beta3
+kind: KubeSchedulerConfiguration
+
+profiles:
+  - schedulerName: default-scheduler
+  - schedulerName: foo-scheduler
+    pluginConfig:
+      - name: NodeAffinity
+        args:
+          addedAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: scheduler-profile
+                  operator: In
+                  values:
+                  - foo
+The addedAffinity is applied to all Pods that set .spec.schedulerName to foo-scheduler, 
+in addition to the NodeAffinity specified in the PodSpec. 
+That is, in order to match the Pod, nodes need to satisfy addedAffinity and the Pod's .spec.NodeAffinity.
+
+Since the addedAffinity is not visible to end users, 
+its behavior might be unexpected to them. Use node labels that have a clear correlation to the scheduler profile name.
+
+
+---------------------------------------------------------------------
+Inter-POD Affinity: Affinity Based on Pod lables
+
+Inter-pod affinity and anti-affinity 
+Inter-pod affinity and anti-affinity allow you to constrain on which nodes your Pods can be scheduled based on the labels of Pods already running on that node, 
+instead of the node labels.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-pod-affinity
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: security
+            operator: In
+            values:
+            - S1
+        topologyKey: topology.kubernetes.io/zone
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: security
+              operator: In
+              values:
+              - S2
+          topologyKey: topology.kubernetes.io/zone
+  containers:
+  - name: with-pod-affinity
+    image: registry.k8s.io/pause:2.0
+
+
+=================================================
+
+Name Spaces
+
+Assign objects to Namespaces :
+
+kubectl create –f pod-definition.yml 
+
+
+
+------------------------------------------------------------------------	
+Resource Requirements:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+  name: simple-webapp
+spec:
+  containers:
+  - image: nginx
+    name: simple-webapp
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        memory: "0.5Gi"
+        cpu: 1
+	  limits:
+	    memory: "1Gi"
+		cpu: 2
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+
+When scheduler plan to schedule a pod it look at the requests and verify whether requested amount of resouces are available on Node.
+CPU 
+0.1  == 100m (mili)
+1 CPU - 1 core or 1 thread
+
+Memorty 
+
+1G refers to 1000 megabites
+1Gib refers to 1024 mb
+
+By default there is no limits set on the pod that means pod can consume as much resouces
+
+How to ensure by default pod will get sufficient amount of resources allocated?
+
+LimitRanges
+
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cpu-resouce-constraints
+
+spec: 
+  limits:
+  - defaults:
+      cpu: 500
+    defaultRequests: 
+	  cpu: 500
+	max:
+	  cpu: "1"
+	min:
+	  cpu: 100m
+	type: Container
+------------------------------------------------------  
+DaemonSets:
+Runs copy of the Pod on every Node
+
+
+DaemonSet definations are similar to ReplicaSet definations
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: elasticsearch
+  namespace: kube-system
+  labels:
+    k8s-app: elasticsearch-logging
+spec:
+  selector:
+    matchLabels:
+      name: elasticsearch
+  template:
+    metadata:
+      labels:
+        name: elasticsearch
+    spec:
+      containers:
+      - name: elasticsearch
+        image: registry.k8s.io/fluentd-elasticsearch:1.20
+		
+----------------------------------------------
+Static PODs
+
+If there is no kubernets cluster like apiserver, etcd, scheduller etc and only kubelete is available on 
+worker node, in this case kubelete can create pod
+you will have to copy pod1.yaml file to /etc/kubernetes/mainifest directory on node. 
+Kubelete periodically checks this directory for mainifests and creates pods and make sure they are running all the time
+
+The pods created by kubelete without invervension from api server are static pods. 
+
+
+cd /etc/kubernetes/mainifest
+kubectl run static-busybox --image=busybox --dry-run=client -o yaml --command -- sleep 1000 > static-pod.yaml
+kubectl get po
+
+----------------------------------------------------------------
+
+Multiple Schedulers - 
+
+If you have custome requirement to schedule pods for perticular application, 
+you can write your own scheduler and deploy it 
+
+1. Need service account
+
+controlplane ~ ➜  kubectl get serviceaccounts -n kube-system| grep my
+my-scheduler 
+
+controlplane ~ ➜  kubectl get sa my-scheduler -n kube-system -o yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  creationTimestamp: "2024-01-21T10:59:57Z"
+  name: my-scheduler
+  namespace: kube-system
+  resourceVersion: "876"
+  uid: a4f39402-4606-4d5d-b15a-baa12d06240d
+  
+2. ClusterRoleBinding
+
+controlplane ~ ✖ kubectl get clusterrolebinding my-scheduler-as-kube-scheduler -n kube-system -o yaml 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  creationTimestamp: "2024-01-21T10:59:57Z"
+  name: my-scheduler-as-kube-scheduler
+  resourceVersion: "877"
+  uid: d44c9550-38ad-4d8e-8d53-c559bd9bafb2
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:kube-scheduler
+subjects:
+- kind: ServiceAccount
+  name: my-scheduler
+  namespace: kube-system
+  
+controlplane ~ ➜  kubectl get clusterrolebinding my-scheduler-as-volume-scheduler -n kube-system -o yaml 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  creationTimestamp: "2024-01-21T10:59:57Z"
+  name: my-scheduler-as-volume-scheduler
+  resourceVersion: "878"
+  uid: 914ca511-9a83-4370-ab4b-91ec96472cf0
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:volume-scheduler
+subjects:
+- kind: ServiceAccount
+  name: my-scheduler
+  namespace: kube-system
+
+
+controlplane ~ ✖ cat my-scheduler-config.yaml 
+apiVersion: kubescheduler.config.k8s.io/v1beta2
+kind: KubeSchedulerConfiguration
+profiles:
+  - schedulerName: my-scheduler
+leaderElection:
+  leaderElect: false
+  
+controlplane ~ ➜  cat my-scheduler-config.yaml
+apiVersion: kubescheduler.config.k8s.io/v1beta2
+kind: KubeSchedulerConfiguration
+profiles:
+  - schedulerName: my-scheduler
+leaderElection:
+  leaderElect: false
+  
+controlplane ~ ➜  cat my-scheduler.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: my-scheduler
+  name: my-scheduler
+  namespace: kube-system
+spec:
+  serviceAccountName: my-scheduler
+  containers:
+  - command:
+    - /usr/local/bin/kube-scheduler
+    - --config=/etc/kubernetes/my-scheduler/my-scheduler-config.yaml
+    image: registry.k8s.io/kube-scheduler:v1.27.0
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 10259
+        scheme: HTTPS
+      initialDelaySeconds: 15
+    name: kube-second-scheduler
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 10259
+        scheme: HTTPS
+    resources:
+      requests:
+        cpu: '0.1'
+    securityContext:
+      privileged: false
+    volumeMounts:
+      - name: config-volume
+        mountPath: /etc/kubernetes/my-scheduler
+  hostNetwork: false
+  hostPID: false
+  volumes:
+    - name: config-volume
+      configMap:
+        name: my-scheduler-config
+
+
+controlplane ~ ➜  cat nginx-pod.yaml 
+apiVersion: v1 
+kind: Pod 
+metadata:
+  name: nginx 
+spec:
+  containers:
+  - image: nginx
+    name: nginx
+  schedulerName: my-scheduler
+  
+--------------------------------------------------------
+
+Configure scheduler Profile
+
+While scheduling pod scheduler looks at "priorityClass" property in Pod defination
+and priortise the pod scheduling in scheduling queue. (Note first need to create PrioryClass object)
+
+Scheduling stages 
+
+I - scheduling queue - schedules pod in the queue based on pod PrioryClass
+II - Filtering - filter out the Nodes based on CPU/Mem requirement. skip the nodes that does not have enough resources
+III - Score - Assigns scrore to the node based on free resources and schedule pod on high scrore node
+IV - Binding - Pods gets bound to the node
+
+In each of above phases differrent scheduling plugins are used e.g
+PrioritySort - Scheduling queue
+
+NodeResouceFit - Node filter
+NodeName
+NodeUnscheduleable
+NodeResouceFit
+TaintToleration
+NodePort
+NodeAffinity
+
+Score - :
+ImageLocality
+NodeResouceFit
+TaintToleration
+
+Binding - :
+defaultBinder
+------------
+
+Scheduling Profile - Problem with creating multiple scheduler is that they run as separate process, 
+and there could be race condition as one scheduler doesnt know other scheduler is scheduling pod on the same
+node. 
+here kubernetes introduced Profiles where with single scheduler you can add multiple scheduling Profiles 
+(config for custome scheduler) 
+
+
+apiVersion: kubescheduler.config.k8s.io/v1 
+kind: KubeScheduerConfiguration
+profiles:
+- schedulerName: my-scheduler1
+- schedulerName: my-scheduler2
+- schedulerName: my-scheduler3
+
+Ref: 
+https://github.com/kubernetes/community/blob/master/contributors/devel/sig-scheduling/scheduling_code_hierarchy_overview.md
+
+
+
+https://kubernetes.io/blog/2017/03/advanced-scheduling-in-kubernetes/
+
+
+
+https://jvns.ca/blog/2017/07/27/how-does-the-kubernetes-scheduler-work/
+
+
+
+https://stackoverflow.com/questions/28857993/how-does-kubernetes-scheduler-work
+
+==================================================================================================================
+
+Logging and Monitoring
+
+kubectl logs webapp-1 -f 
+
+if there are two containers in same pod defination then need to specify container name to see the logs of that particular container
+
+kubectl logs webaap-2 <container-name> -false
+
+========================================================
+
+Application Lifecycle Management 
+
+Differrence between Replica set and Deployment -
+
+Deployment creates rollouts with revisions
+
+Deployments - :
+
+When you first trigger a deployment its create Rollout, 
+Rollout creates new revision (lets say running pods has Revision-1 and rollout will create new Revision-2 with newver version of appliation pods)
+This helps to keep track of the upgrades and changes
+
+commands - 
+
+kubectl rollout status deployment/myapp-deployment 
+kubectl rollout history deployment/myapp-deployment
+
+Deployments Strategies - :
+
+1 - Recreate - first delete all pods and recreate with newer version
+
+2 - Rolling updates - Delete pod one by one and recreate it - First creates new replicaset 
+
+
+Configure deployment 
+kubectl apply -f deployment-defination.yaml
+
+Update image in deployment
+
+kubectl set image deployment/myapp-deployment nginx-container=nginx:1.9.1
+
+To see differrence between rolling update and Recreate 
+
+kubectl describe deployment/myapp-deployment
+
+
+Rollback deployment - :
+
+kubectl rollout undo deployment/myapp-deployment
+
+==============================================================
+Configure Applications 
+
+Commands & Arguments
+
+Docker CMD and Entypoint 
+
+By default docker containers runs process defined in CMD or Entrypoint and exits 
+
+if CMD ["bash"] then container will exit immidiately.
+
+docker run ubuntu  ==> will exit immidiately. 
+
+-------------
+Diff between CMD and Entrypoint
+
+Dockerfile
+
+FROM ubuntu
+
+# container will sleep for 5 seconds and exit 
+CMD ["sleep", "5"]  == > if you try to pass argument to sleep while running docker container "docker run ubuntu sleep 10", this will return error as considering two arguments to sleep
+
+What if you want to change the sleep argument from 5 to 10?
+Here Entrypoint is helpfull 
+
+you can just define command with Entrypoint
+
+Entrypoint ["sleep"]
+
+# docker run ubuntu sleep 15  # pass the argument to sleep
+
+TO pass default argument to sleep command use both Entrypoint and CMD in docker file
+
+Entrypoint ["sleep"]
+# default argument to sleep is 5
+CMD ["5"]
+
+-----------------------------
+MY example tested 
+
+With Entrypoint you can override only command argument and not entire command
+The command in Entrypoint will always run
+
+With CMD you can override entire command with Argumets 
+
+To set default command line arugument in Dockerfile use both Entrypoint and CMD 
+
+examples: 
+
+FROM ubuntu
+# example entry point with default argument
+ENTRYPOINT ["echo"]
+# Default argument to echo
+CMD ["Hello"]
+
+# run docker wiht new argument to echo 
+
+mohan@mhn-acer:~/cka$ docker run ubuntu-echo "Hello World"
+Hello World
+
+----------------------
+With CMD you can not override command argument but can override whole command
+
+
+#CMD example 
+FROM ubuntu
+CMD ["echo", "Hello Mohan"]
+
+# Error while trying to change argument of CMD
+docker run ubuntu-echo-1 "Hello Thakur"
+mohan@mhn-acer:~/cka$ docker run ubuntu-echo-1 "Hello Thakur"
+docker: Error response from daemon: 
+
+# override whole command 
+mohan@mhn-acer:~/cka$ docker run ubuntu-echo-1 echo "Hello Thakur"
+Hello Thakur
+mohan@mhn-acer:~/cka$ docker run ubuntu-echo-1 sleep 10
+
+--------------------------------
+In pod defination 
+
+command: sleep  is equivalant to Entrypoint
+args: "2000"  is equivalant to CMD ["2000"] i.e default argument to the entrypoint command
+
+-----------
+
+Envirionment Variables - :
+
+env: 
+  - name: COLOR
+    value: "Blue"
+ 
+-----------------------------------------------------------
+
+Configmaps - :
+
+There are two steps involve with configmaps -
+1 - Create configMap
+
+kubectl create configmap app-config --from-literal=APP_COLOR=blue
+
+OR 
+
+kubectl create configmap app-config --from-file=app_config.properties
+
+
+apiVersion: v1
+data:
+  APP_COLOR: blue
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: app-config
+  
+  
+2. Inject config map values to Pod defination
+
+envFrom:
+  - configMapRef:
+      name: app-config
+
+
+===========================================
+
+init Containers 
+
+initContainers are useful when an application needs to run addtional pre-task before start of appliation. 
+It is similar to sidecar containers
+
+Containers 
+
+ 
+
+======================
+
+Cluster Maintainance 
+
+I. OS upgrade on nodes - Patching
+
+kubectl drain node01  
+kubectl drain node01 --ignore-daemonsets
+
+drain will evicts and recreate pods on other nodes. Pods which are not part of any replicaset will be lost after drain - this need to be taken care
+
+kubectl cordon node01  - Mark the node01 unschedulable 
+
+kubectl uncordon node01 - Mark node schedulable however pods which were evicted will not fallback on node01. Newly created pods will be deployed on node01
+
+------------------------
+
+Cluster Upgrade process:
+
+Consideration - 
+
+You can not jump to latest version - if running version is 1.20 and latest version is 1.24 
+you need to upgrade all components to 1.21, 1.22, 1.23 and 1.24 
+including kubeadm, kube-apiserver, kubelet etc 
+
+kube-scheduler and ControllerManager can run 1 version behind of kubeapiserver - if kube api server is runing X, then 
+scheduler and controller manager can run X -1 
+
+Kubelet and Kube proxy can run at X-2 version 
+none of the component can run higher version of API server except kubectl 
+
+kubectl can run X+1 version
+
+Uprading cluster involves two steps - 
+first you need to upgrade master node, and then upgrade worker nodes
+
+- kubeadm upgrade plan
+- kubeadm upgrade apply
+
+- while upgrading master node, master node goes down but all workload on nodes continue to run normal 
+  and only management fuctions will not be available - kubernetes apis will not be accessible (kubectl)
+  if pod goes down, new pod will not be created.
+  
+- Node Uprade stategies 
+
+I . Upgrade all nodes at a time - this will require downtime
+II . Upgrade node one by one - need to move workload to the other nodes 
+III. In cloud bring up new node with newer kube version, move the workload to new nodes and bring down old nodes
+
+upgrade steps - :
+
+- Master: 
+- upgrade kubeadm to new version 
+- apt update & apt-get upgrade kubeadm=1.27.6
+- kubeadm upgrade apply v1.29.10
+- upgrade kubelet to newv version 
+- apt-get upgrade kubelet=1.26.6
+
+- Nodes: 
+  - drain the node 
+  - cordon the node
+  - upgrade kubeadm and kubelet on the nodes
+	- apt update && apt-get upgrade kubeadm=1.27.6
+	- apt-get upgrade kubelet=1.27.6
+	- kubeadm upgrade node config --kubelet-version v1.27.6 
+	- systemc restart kubelet-service
+	- uncondon the node
+	
+- Upgrade Process
+
+- Take backup of all cluster resouces 
+	kubectl get all --all-namespaces -o yaml > all-res-backup.yaml
+- Upgrade Master
+	apt update & apt-get upgrade kubeadm=1.27.6
+	kubeadm upgrade plan
+	kubeadm upgrade apply
+- Upgrade Nodes one by one
+	- kubectl drain nodes node01
+	- kubectl cordon node node01
+	- upgrade kubeadm
+	- kubectl uncondon node node01
+	
+================================================
+
+Backup and Restore methods - :
+
+Backup candidtes 
+- Resource configuration 
+	- kubectl get all --all-namespaces -o yaml > backup_all_deployed_resouces.yaml
+	- third party tool Velero 
+- ETCD
+	- ETCD_API=3 etcdctl snapshot save snapshot.db
+	- ETCDCTL_API=3 etcdctl snapshot save /opt/snapshot-pre-boot.db \
+	--endpoints 127.0.0.1:2379 \
+	--cert=/etc/kubernetes/pki/etcd/server.crt \
+	--key=/etc/kubernetes/pki/etcd/server.key \
+	--cacert=/etc/kubernetes/pki/etcd/ca.crt
+	
+	Restore from backup ETCD container 
+		- ETCD_API=3 etcdctl snapshot restore /path/tobackup/snapshot.db --data-dir=/var/lib/etcd-data-new  - (will create new etcd instance from backup)
+		
+		- ls /var/lib/etcd-data-new
+		
+				controlplane ~ ➜  tail /etc/kubernetes/manifests/etcd.yaml 
+				  volumes:
+				  - hostPath:
+					  path: /etc/kubernetes/pki/etcd
+					  type: DirectoryOrCreate
+					name: etcd-certs
+				  - hostPath:
+					  path: /var/lib/etcd     	<====== Change to /var/lib/etcd-data-new
+					  type: DirectoryOrCreate
+					name: etcd-data
+				status: {}
+		
+		- Delete and recreate containers / restart containers 
+			- kubectl delete po -n kube-system etcd-controlplane kube-controller-manager-controlplane kube-scheduler-controlplane
+		
+			- check - kubectl get po -n kube-system
+			
+		Restore External ETCD DB
+			- check data-dir location - cat /etc/systemd/system/etcd.service or cat /etc/etcd.env
+			- ETCD_API=3 etcdctl snapshot restore /path/tobackup/snapshot.db --data-dir=/var/lib/etcd-data-new
+			- chown -R etcd:etcd /var/lib/etcd-data-new
+			- update data-dir path in /etc/etcd.env
+			- systemctl daemon-reload
+			- systemctl start etcd
+			- kubectl delete po -n kube-controller-manager-controlplane kube-scheduler-controlplane
+			- kubectl get po 
+	
+			https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/#backing-up-an-etcd-cluster
+
+			https://github.com/etcd-io/website/blob/main/content/en/docs/v3.5/op-guide/recovery.md
+
+			https://www.youtube.com/watch?v=qRPNuT080Hk
+			
+- Persistant Volumes
+
+===============================
+
+Working with multipl clusters 
+
+- kubectl config get-clusters 
+- kubectl config get-clusters 
+- kubectl config use-context cluster1/2
+
+
+Chnage to namespace 
+
+kubectl confgi set-context --current --namespace=development 
+
+==========================================
+
+Security - :
+
+Topics :
+	- Authentication
+		- secure auth to API
+		- cluster hosts auth
+		- SSL certificates to communicate with cluster components
+		- kube-config, Secrets
+		
+	- Authorization 
+	   - Users, SA, 
+	   - RBAC, ABAC (attribute based auth), Webhook
+	   - Roles, Rolebindings, Cluster roles, 
+	   
+	- Network Security 
+		- Network Policy
+		
+	- Namespaces
+	- Docker Image security
+		- auth to registry 
+		- limit access to contaier root user 
+	
+
+
+- Secure kubernetes hosts - SSH, Authentication etc 
+- Control access to apiserver - who can access apiserver and what can they do
+
+	- Who can access - Authentication 
+		- Passwords 
+		- Tokens
+		- External auth providers - LDAP
+		- service accounts
+		
+	- What can they do - Authorization 
+		- RBAC
+		- Attributed based access control - ABAC 
+		- Node authorization
+		- Webhook mode
+		
+	- Network policies to restrict access between pods 
+			by default all pods can access all other pods 
+			
+- TLS Certificates - :
+	Kubernetes use client certificates to authenticate to other services 
+	- create private key
+		openssl genrsa -out apiserver.key 2048
+	- Create CSR (Certificate Singning Request)
+		openssl req -new -key apiserrver.key -subj \
+		"/CN=kube-apiserver" -out apiserver.cs
+	
+	- Sign cert using CA cert and CA key
+		openssl x509 -req -in apiserver.csr \
+			-CA ca.crt -CAkey ca.key -out apiserver.cr
+
+- Create certificate signing request (CSR)
+	- openssl genrsa -out akshay.key 2048
+	- openssl req -new -key akshay.key -subj "/CN=akshay" -out akshay.csr
+	- cat akshay.csr | base64
+
+
+controlplane ~ ✖ cat akshay-csr.yml 
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: akshay
+spec:
+  groups:
+    - system:authenticated
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+  request: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURSBSRVFVRVNULS0tLS0KTUlJQ1ZqQ0NBVDRDQVFBd0VURVBNQTBHQTFVRUF3d0dZV3R6YUdGNU1JSUJJakFOQmdrcWhraUc5dzBCQVFFRgpBQU9DQVE4QU1JSUJDZ0tDQVFFQXNMdXFVeHIvbTVCY2tFZFRrT2VlQUVheS9TbkVhSW5MRVlPRVJ1MEh0V1g4ClZaN3JmMTBsT3YzTXl0dUI5MkFyQmg0a3I2QnBLRGFRS0lhS05YNE04aVZsSmNITFV2d0hySWZseFY4aS9lMjcKQVd1ZEhzN1o5Q245anMwQjVqTlRmRnMxUUlkUjZuZjh0R0JkYUk0VGY4OG9RQWdhRjduZUZ5RURZWjlwanZPSQpPbUZQaXZlcVpUc0M4MG9LSXJpb2ZPMFdCWXN4c2hyOW92S0VzTEU3NUR4N1dCZVJpbVJGZDRuSHh0YnlFMlNlCkg1b3NWYWI1cklzbk80eDA5WHczejlTZWp6N3Nsc1dQTTFXaG5UbVZoMFNxdkpUMnlzTUJjenZZcG1CSERvQUwKbUJpbjFqTzNhZ1BuRk1xZDNFN0NUWFRxZWpYQVo0NlN4U3Rjd3VFTEJRSURBUUFCb0FBd0RRWUpLb1pJaHZjTgpBUUVMQlFBRGdnRUJBSHpZdjJJQ09ibDl0eklTWXlQZlRjc3VRRGJXcUZSM2MzbjNKeThKR29hUnVGN092TUVTCkROWW5LQkMybTFzaFQ0VDkzMXZuc0t2SlZEdWVkQkdyM3ZENW11aFNwRnZqdnRNL2lqNTFad3BUeUZzM2kzb3AKdTh6WXVTamFDTy9NMWdtYmRJQUhJY2ltOFdlbUFRWGpHUlhmZG9IbVpUN3ptY2VUYXpXT3d3dzJRUDdNWHFOcAprV1ZscWtaN0RObHQ5UFdydHI3azk3VWlDL1VOUG5UemN1dE81U1N6Y1lqMmpXZ1Q3YUh3WllaUCs0SFJqSzhUClZNRzBaMXliVHFRQVU4QzFxMHF6QzdqTUN1M0RNT25GeHk1KzRLTFhUYVZqcDYvT3h4bWx5ZGN0amhGWDNuZEMKcVBsMGhiZTJDcGk1eHF2VjA4WVZJQ3M5REpkSVlZK0JTNE09Ci0tLS0tRU5EIENFUlRJRklDQVRFIFJFUVVFU1QtLS0tLQo=
+  signerName: kubernetes.io/kube-apiserver-server		
+			
+	- kubectl apply -f akshay-csr.yml
+	- kubectl get csr
+=====================================================================
+
+Kube Config file
+
+current-context == default context 
+
+- kubectl config view
+- kubectl config get-contexts
+- kubectl config use-context
+- kubectl config get-clusters
+- kubectl config get-users
+
+- kubectl config use-context prod-user@production
+
+============================================================
+
+Kubernetes API Groups - 
+- api (core)	- 
+- apis (named)
+api and apis are catagoriesed in two groups - core group and named group
+in core group all core functionalities exist - such as pods, namespaces, rc, nodes etc 
+named apis is more orgnized, going forward all new features will be made available through this api
+- metrics
+- logs
+- heathz
+- version
+
+===============================
+Authorization - Allow or Deny access to user to the api
+
+- Create Role with permissions 
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: default
+  name: pod-reader
+rules:
+- apiGroups: [""] # "" indicates the core API group
+  resources: ["pods"]
+  verbs: ["get", "watch", "list", "create", "delete", "update"]
+  resourceNames: [“blue“, “orange”]  # <== grant access to particular pods
+
+
+- Create role bindings 
+
+apiVersion: rbac.authorization.k8s.io/v1
+# This role binding allows "jane" to read pods in the "default" namespace.
+# You need to already have a Role named "pod-reader" in that namespace.
+kind: RoleBinding
+metadata:
+  name: read-pods
+  namespace: default
+subjects:
+# You can specify more than one "subject"
+- kind: User
+  name: jane # "name" is case sensitive
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  # "roleRef" specifies the binding to a Role / ClusterRole
+  kind: Role #this must be Role or ClusterRole
+  name: pod-reader # this must match the name of the Role or ClusterRole you wish to bind to
+  apiGroup: rbac.authorization.k8s.io
+  
+- Related commands - 
+
+kubectl get roles
+kubectl get rolebindings
+kubectl describe role developer
+kubectl describe rolebinding devuser-developer-binding
+kubectl auth can-i create deployments
+kubectl auth can-i delete nodes
+kubectl auth can-i create deployments --as dev-user
+kubectl auth can-i create pods --as dev-user
+kubectl auth can-i create pods --as dev-user --namespace test
+
+============================================
+
+Cluster Roles and rolebinding
+
+When we create a role and role binding they are created in namespaces
+where cluster roles are cluster scopped like node, they are cluster wide not limited to any namespace 
+
+- see namespaced resources 
+	kubectl api-resources --namespaced=true
+- clusterwide resources 
+	kubectl api-resources --namespaced=false
+
+# Create a cluster role named "pod-reader" that allows user to perform "get", "watch" and "list" on pods
+  kubectl create clusterrole pod-reader --verb=get,list,watch --resource=pods
+  
+  # Create a cluster role named "pod-reader" with ResourceName specified
+  kubectl create clusterrole pod-reader --verb=get --resource=pods --resource-name=readablepod --resource-name=anotherpod
+  
+  # Create a cluster role named "foo" with API Group specified
+  kubectl create clusterrole foo --verb=get,list,watch --resource=rs.apps
+  
+  # Create a cluster role named "foo" with SubResource specified
+  kubectl create clusterrole foo --verb=get,list,watch --resource=pods,pods/status
+  
+  # Create a cluster role name "foo" with NonResourceURL specified
+  kubectl create clusterrole "foo" --verb=get --non-resource-url=/logs/*
+  
+  # Create a cluster role name "monitoring" with AggregationRule specified
+  kubectl create clusterrole monitoring --aggregation-rule="rbac.example.com/aggregate-to-monitoring=true"
+
+  kubectl create clusterrole node-admin --verb=* --resource=nodes
+
+# Create cluster role binding 
+
+kubectl create clusterrolebinding node-admin --clusterrole=node-admin --user=michelle
+
+
+==========================================================
+
+Service Accounts 
+
+Two types of service accounts - user account and Service account
+User accounts are for humans and service account are for services interacting with kubernetes 
+
+API Requests from other services need to be authenticated by kubernetes and for that reason service accounts are used. 
+
+
+When service account is created k8s creates a token, token is stored in secrect object 
+This token then can be used to make Rest API call to kubernetes API 
+
+There are defferrent ways to create/use sa tokens pre version 1.22 and post version 1.24
+pre ver 1.22 tokens were set not to expire 
+
+you can associate token with no expirations using annotation 
+
+check documentation  
+
+	kubectl create sa web-dashboard
+	kubectl describe sa web-dashboard
+	
+	
+
+# set service account for deployment 
+
+ kubectl set serviceaccount deployment  web-dashboard dashboard-sa
+
+==============================================
+
+Image Security 
+
+Accessing private docker registry 
+
+- Create docker-regeistry secret type
+	 kubectl create secret docker-registry my-reg-cred --docker-server=myprivate-regisrty.com --docker-username=DOCKER_USER
+	--docker-password=DOCKER_PASSWORD --docker-email=DOCKER_EMAIL
+
+- Edit deployment 
+
+	change image: myprivate-regisrty.com/nginx/nginx:latest
+	
+	apiVersion: v1
+	kind: Pod
+	metadata:
+	  name: private-reg
+	spec:
+	  imagePullSecrets:     <==
+	  - name: my-reg-cerd	<==
+	  containers:
+	  - name: private-reg-container
+		image: <your-private-image>
+  
+=========================================
+
+Docker Security 
+
+On linux host docker container run in separate namespce - linux host has different namespace 
+so in case withing container if sleep command is running and if you execute ps aux  then sleep command has process id of 1 
+similarly on linux host ps aux commnad shows different process id for the sleep command running in docker container. 
+
+this is because of processes are based on namespace (kernel namespaces)that isolate docker containers from host 
+
+
+
+- Root user - by default processes in container run as root user  
+	But root user in container has limited capabilites 
+	
+	if you want to run process with other user in Docker file specify User <username>
+	
+	to change previllages of container root user run docker command as 
+	
+	docker run --cap-add previlaged (chgeck list of capabilites or help) 
+	
+	docker run --cap-add MAC_ADMIN
+	
+----------------------
+Security context in kubernetes to limit root user access (container root user)
+
+above docker capabilities add can be achieved with security context in kubernetes 
+
+Security context can be set on container level or Pod level 
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-context-demo-4
+spec:
+  containers:
+  - name: sec-ctx-4
+    image: gcr.io/google-samples/node-hello:1.0
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN", "SYS_TIME"]  <== root user can chage Network config as well as system time 
+		
+https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+
+=======================================
+Network Policies 
+
+In kubernetes by default all pods communicate with each other, however if you want allow/deny communication between certain pods 
+then Network policy should be attached to the pod. 
+
+Network policy is kubernetes object where we can specify set of ingress and egress rules. 
+
+Network policy is kind of Security Group in AWS 
+
+
+example allow multiple matchLabels and ports for mutltiple egress rules
+
+controlplane ~ ➜  cat internel-policy.yaml 
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-policy
+spec:
+  podSelector:
+    matchLabels:
+      name: internal
+  policyTypes:
+  - Egress
+
+  egress:
+  - to:							<<== rule 1
+    - podSelector:
+        matchLabels:
+          name: payroll
+    ports:
+    - protocol: TCP
+      port: 8080
+  - to:							<<== rule 2
+    - podSelector:
+        matchLabels:
+          name: mysql
+    ports:
+    - protocol: TCP
+      port: 3306
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/16
+    ports:
+    - protocol: TCP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/16
+    ports:
+    - protocol: UDP
+      port: 53
+
+Ingress example
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-policy
+spec:
+  podSelector:
+    matchLabels:
+      name: internal
+  policyTypes:
+  - Ingress
+
+  egress:
+  - from:							<<== rule 1
+    - podSelector:
+        matchLabels:
+          name: payroll
+    ports:
+    - protocol: TCP
+      port: 8080
+  - from:							<<== rule 2
+    - podSelector:
+        matchLabels:
+          name: mysql
+    ports:
+    - protocol: TCP
+      port: 3306
+======================================================
+============================================================
+
+Storage 
+
+Docker Basics :- 
+
+Storage Drivers and Volume Drivers 
+
+- COPY-ON-Write 
+
+	- we can edit file in running container which is built as part of docker build
+		at this point of time docker creates copy of that file within container and make changes to it
+		but does not make any changes in image - is called copy on write 
+		
+- Volume Mount 
+
+	docker volume create data_vol   <== creates volume data_vol under /var/lib/docker/volumes
+	
+	docker run -v data_vol:/var/lib/mysql mysql  <== mounts /var/lib/mysql on data_vol
+	
+	docker run -v new_vol:/var/lib/mysql mysql  <== creates volume new_vol and mount /var/lib/mysql on new_vol
+	
+- Bind Mount 	
+	docker run -v /data/mysql:/var/lib/mysql mysql  <== Bind mount 
+	or 
+	docker run --mount type=bind,source=/data/mysql,target=/var/lib/mysql mysql:latest 
+	
+Storage Drivers are responsible for doing the volume mount operations, maintaining the layered architecture, copying files etc 
+
+example storage drivers :
+AUFS 	- on ubuntu
+Device Mapper - Redhat
+overlay
+overlay2
+zfs 
+
+-------------------------------------------------
+
+Volumes - Not persistent across all nodes 
+- Directory mount which may or may not be available on all nodes 
+
+Persistant Volumes - persistant across all nodes 
+- created as kubernetes object 
+
+example Volume mount
+
+volumeMounts:
+    - mountPath: /log
+
+volumes:
+  - name: log-volume
+    hostPath: 
+      path: /var/log/webapp
+      type: Directory
+
+Example create local persistant volume 
+
+controlplane ~ ➜  cat pv-log.yaml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-log
+spec:
+  capacity:
+    storage: 100Mi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /pv/log
+
+------------------
+
+how to use in pod defination 
+
+ volumeMounts:
+    - mountPath: /log
+      name: log-volume
+
+ volumes:
+  - name: log-volume
+    persistentVolumeClaim:
+      claimName: claim-log-1
+-----------------------------------
+
+Storage Classes 
+
+kubectl get storageclass
+
+In normal scenario we have to create a disk on cloud then then create volume to use the disk. 
+here storage classes comes into picture, storage classes work as provisioner to provision disk on 
+cloud platforms. 
+eg - gcePersistenetDisk, awsElasticBlockStore
+
+if we are using storageclass then creation of PV is not needed 
+PVC will use StorageClass. we need to difine StorageClass name to use in PVC defination file 
+
+controlplane ~ ➜  cat local-pvc.yaml 
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: local-pvc
+spec:
+  storageClassName: "local-storage"
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Mi
+	  
+controlplane ~ ➜  cat nginx-pod.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: nginx
+  name: nginx
+spec:
+  containers:
+  - image: nginx:alpine
+    name: nginx
+    resources: {}
+    volumeMounts:
+      - mountPath: /var/www/html
+        name: web-data
+  volumes:
+    - name: web-data
+      persistentVolumeClaim:
+        claimName: local-pvc
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+
+===============================================
+
+Networking 
+
+Networking Basics 
+
+- POD Networking 
+IP Command ref: 
+
+- ip link  
+- ip addr add 192.168.1.10/24 dev eth0
+- ip route add 192.168.1.0/24 via 192.168.2.1
+- ip route add default via 192.168.2.1  (default = 0.0.0.0/0)
+Kernel Namespaces 
+
+- ip netns add red 
+- ip netns add blue 
+
+- ip netns
+
+exec ip link command in namespaces 
+
+- ip link exec red 
+- ip link red
+- ip link add veth-red type veth peer name veth-blue  # create link between two namespaces 
+- ip link add veth-red type veth peer name veth-blue
+- ip link set veth-red netns red
+- ip link set veth-blue netns blue
+- ip addr add 192.168.15.1 dev veth-red   # add ip to namespace 
+- ip -n blue addr add 192.168.15.2 dev veth-blue
+- ip link set veth-red up
+- ip -n blue link set veth-blue up
+- ip -n red link set veth-red up
+- ip netns exec red ping 192.168.15.2
+- ip netns exec red ping 192.168.15.
+- ip netns exec red arp
+
+find brigde interfaces on linux host
+
+ip address show type bridge
+
+CNI : -
+
+installation path : /etc/cni/net.d
+Binary path for plgins : /opt/cni/bin/
+
+To check Pod network cidr range view the logs of the CNI pods/status
+
+kubectl logs weave-dsjfl908 | grep ipaloc 
+
+iptables -nvL -t nat
+
+
+------------------------------------------------------------
+
+- Service Networking 
+
+IP address assignment to the service object managed by kube-proxy 
+kube-proxy has three ways to manage communication between services and pods 
+
+userspace, iptables, ipvs
+
+in case of iptables, when service is created and mapped to the pod, 
+kube-proxy creates a forward rule in iptables to forward traffic to the pod which is hitting service 
+
+ - iptables -nvL -t nat
+
+kube proxy has differrent range of cidr than the pod network 
+
+you can see the 
+----------------------------
+
+- DNS in kubernetes 
+
+  Service DNS : -
+  
+  for each object like Namespaces, SVC, kube-dns creates a separate subdomain
+  cluster.local is Root domain 
+  
+  service-name: web-service 
+  Namespace: apps subdomain 
+  Service: svc subdomain
+  Root domain: cluster.local
+  
+  
+  so to resolve serivce in differrent namespace (namespace apps) fqdn will be like 
+  
+  web-service.apps.svc.cluster.local 
+  
+  kubernetes resolves the names in this way within the cluster 
+
+By defualt core-dns does not create records for pods however we can enable the same 
+
+recods for pod would be 
+
+10-15-1.20  for 10.15.1.20 
+
+Kubernetes deploys coredns server as pod in cluster which manage name resolution for pods
+kube-dns service (Cluster-IP) is created to access the DNS server - pods can use this service to access dns server 
+pods can use ip of kube-dns service in /etc/resolv.conf 
+
+Corefile (dns db) passed to the COredns pods as Configmap 
+
+- kubectl describe configmap coredns -n kube-system
+
+===================================
+
+Mock test 
+
+kubectl expose deployment hr-web-app --type=NodePort --port=8080 --name=hr-web-app-service --dry-run=client -o yaml > hr-web-app-service.yaml
+
+
+
+
+=========================================
+
+Troubleshooting 
+
+Application Failuers - 
+
+Notes : 
+
+- Containers uses service-name to connect to other services exposed by other container 
+
+- Switch between the namespaces -
+	kubectl config set-context --current --namespace=delta 
+	
+	
+
+
+
